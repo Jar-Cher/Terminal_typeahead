@@ -197,8 +197,12 @@ data class LogicalExpression constructor(var rawExp: String) {
                 tokens[tokenId] = tokens[tokenId] + exp[i]
             }
             when {
-                tokens[1] == "=" -> rawExp = if (ArithmeticExpression.from(tokens[0]) == ArithmeticExpression.from(tokens[2])) "(1=1)"
-                else "(1=0)"
+                tokens[1] == "=" -> rawExp = when {
+                    ArithmeticExpression.from(tokens[0]) == ArithmeticExpression.from(tokens[2]) -> "(1=1)"
+                    (ArithmeticExpression.from(tokens[0]) -
+                            ArithmeticExpression.from(tokens[2])).polynomial.size == 1 -> "(1=0)"
+                    else -> rawExp
+                }
                 tokens[1] == ">" -> {
                     val isPositive = (ArithmeticExpression.from(tokens[0]) -
                         ArithmeticExpression.from(tokens[2])).isPositive()
