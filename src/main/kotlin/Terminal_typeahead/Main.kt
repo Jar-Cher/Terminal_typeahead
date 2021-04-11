@@ -58,6 +58,12 @@ data class Command (val type: CommandType, var rawExpression: String)
 
 data class ArithmeticExpression(var polynomial: ArrayList<Int> = ArrayList()) {
 
+    init {
+        require(polynomial.size != 0) { "Incorrect polynomial" }
+        while ((polynomial.last() == 0) and (polynomial.size > 1))
+            polynomial.removeAt(polynomial.size - 1)
+    }
+
     companion object {
 
         fun from(rawExp: String): ArithmeticExpression {
@@ -86,7 +92,7 @@ data class ArithmeticExpression(var polynomial: ArrayList<Int> = ArrayList()) {
                         tokens[1] == "+" -> from(tokens[0]) + from(tokens[2])
                         tokens[1] == "-" -> from(tokens[0]) - from(tokens[2])
                         tokens[1] == "*" -> from(tokens[0]) * from(tokens[2])
-                        (tokens[1].first() in operations) and (tokens[1].length == 1) ->
+                        tokens[1] in operations.map { it.toString() } ->
                             throw IllegalArgumentException("TYPE ERROR")
                         else -> throw SyntaxException("SYNTAX ERROR")
                     }
@@ -112,8 +118,6 @@ data class ArithmeticExpression(var polynomial: ArrayList<Int> = ArrayList()) {
         for (i in ans.indices) {
             ans[i] = this.polynomial.getOrElse(i) {0} + other.polynomial.getOrElse(i) {0}
         }
-        while ((ans.last() == 0) and (ans.size > 1))
-            ans.removeAt(ans.size - 1)
         return ArithmeticExpression(ans)
     }
 
@@ -132,6 +136,8 @@ data class ArithmeticExpression(var polynomial: ArrayList<Int> = ArrayList()) {
     }
 
     fun isPositive(): TruthType {
+        if (polynomial.filterIndexed { i, _ -> i % 2 == 0}.any { it != 0})
+            return TruthType.UNDETERMINED
         val evenId = polynomial.filterIndexed { i, _ -> i % 2 == 0}
         return when {
             evenId.all { it > 0} -> TruthType.TRUE
@@ -173,7 +179,6 @@ data class ArithmeticExpression(var polynomial: ArrayList<Int> = ArrayList()) {
 data class LogicalExpression constructor(var rawExp: String) {
 
     init {
-
         if (rawExp.matches(Regex("""^\(.*\)$"""))) {
             val exp = rawExp.subSequence(1, rawExp.length - 1)
             var depth = 0
@@ -232,12 +237,16 @@ data class LogicalExpression constructor(var rawExp: String) {
                         else -> rawExp
                     }
                 }
-                (tokens[1].first() in operations) and (tokens[1].length == 1) ->
+                tokens[1] in operations.map { it.toString() } ->
                     throw IllegalArgumentException("TYPE ERROR")
                 else -> throw SyntaxException("SYNTAX ERROR")
             }
         }
         else throw SyntaxException("SYNTAX ERROR")
+    }
+
+    override fun toString(): String {
+        return rawExp
     }
 }
 
