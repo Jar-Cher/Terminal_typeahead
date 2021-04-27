@@ -1,10 +1,14 @@
 package Terminal_typeahead
 
 import jdk.nashorn.internal.runtime.regexp.joni.exception.SyntaxException
+import org.apache.commons.math3.analysis.polynomials.PolynomialFunction
+import org.apache.commons.math3.analysis.solvers.NewtonRaphsonSolver
 import java.lang.Integer.max
-import kotlin.math.absoluteValue
+import kotlin.math.*
 
 fun main(args: Array<String>) {
+    val solv = NewtonRaphsonSolver().solve(500000, PolynomialFunction(doubleArrayOf(0.0, 4.0, 1.0)), -3.0, 100.0)
+    println(solv)
     var a = ArithmeticExpression.from("(element*10)")
     var b = ArithmeticExpression.from("(element+10)")
     println(a.polynomial)
@@ -56,7 +60,7 @@ val operations = setOf('+', '-', '*', '>', '<', '=', '&', '|')
 
 data class Command (val type: CommandType, var rawExpression: String)
 
-data class ArithmeticExpression(var polynomial: ArrayList<Int> = ArrayList()) {
+data class ArithmeticExpression(var polynomial: ArrayList<Int>) {
 
     init {
         require(polynomial.size != 0) { "Incorrect polynomial" }
@@ -146,6 +150,91 @@ data class ArithmeticExpression(var polynomial: ArrayList<Int> = ArrayList()) {
         }
     }
 
+    fun toPolynomialFunction(): PolynomialFunction =
+        PolynomialFunction(DoubleArray(this.polynomial.size) { i -> polynomial[i].toDouble() })
+
+    fun derivative(): ArithmeticExpression {
+        val coefficients = toPolynomialFunction().polynomialDerivative().coefficients
+        val ans = ArrayList<Int>(List(coefficients.size) {0})
+        for (i in ans.indices)
+            ans[i] = coefficients[i].toInt()
+        return ArithmeticExpression(ans)
+    }
+
+    fun eval(x: Int) = polynomial.foldIndexed(0) { id, prevResult, element ->
+        prevResult + x.toDouble().pow(id).toInt() * element
+    }
+
+    fun solve(): ArrayList<Pair<Double, Double>> {
+        if ((polynomial.size == 1) and (polynomial.first() == 0))
+            return arrayListOf(Pair(Double.MIN_VALUE, Double.MAX_VALUE))
+        if ((polynomial.size == 1) and (polynomial.first() != 0))
+            return arrayListOf()
+        if(polynomial.size == 2) {
+            val ans = -polynomial.first().toDouble() / polynomial.last().toDouble()
+            return arrayListOf(Pair(ans, ans))
+        }
+        val extremes = derivative().solve().map { i -> i.first}
+        val ans = ArrayList<Pair<Double, Double>>()
+        var lowerEstimate = Double.MIN_VALUE
+        for (i in extremes) {
+            val root = NewtonRaphsonSolver().solve(500000, toPolynomialFunction(), lowerEstimate, i)
+            ans.add(Pair(root, root))
+            lowerEstimate = i
+        }
+        val root =
+            NewtonRaphsonSolver().solve(500000, toPolynomialFunction(), extremes.last(), Double.MAX_VALUE)
+        ans.add(Pair(root, root))
+        return ans
+    }
+
+    fun equality(other: ArithmeticExpression): LogicalExpression {
+        val rem = this - other
+        val roots = rem.solve()
+        if ((roots.size == 1) and
+            (roots.first().first == Double.MIN_VALUE) and
+            (roots.first().second == Double.MAX_VALUE))
+            return LogicalExpression(arrayListOf(Pair(Int.MIN_VALUE, Int.MAX_VALUE)))
+        if (roots.size == 0)
+            return LogicalExpression(arrayListOf())
+        val ans =  ArrayList<Pair<Int, Int>>()
+        // Doublecheck they are Int roots
+        for (i in roots) {
+            if (abs(i.first.roundToInt().toDouble() - i.first) < 0.000000001)
+                ans.add(Pair(i.first.roundToInt(), i.first.roundToInt()))
+        }
+        return LogicalExpression(ans)
+    }
+
+    fun bigger(other: ArithmeticExpression): LogicalExpression {
+        val rem = this - other
+        if (rem.polynomial.size == 1)
+            return if (rem.polynomial.first() > 0)
+                LogicalExpression(arrayListOf(Pair(Int.MIN_VALUE, Int.MAX_VALUE)))
+            else
+                LogicalExpression(arrayListOf())
+        val roots = rem.solve()
+        roots.add(0, Pair(Double.MIN_VALUE, Double.MIN_VALUE))
+        roots.add(0, Pair(Double.MAX_VALUE, Double.MAX_VALUE))
+        val ans =  ArrayList<Pair<Int, Int>>()
+        for (i in roots.indices-1) {
+            val tester = (roots[i].first + roots[i+1].first) / 2
+            if (tester < 0)
+                continue
+            val lower = if (abs(roots[i].first.roundToInt().toDouble() - roots[i].first) < 0.000000001)
+                roots[i].first.roundToInt()
+                else ceil(roots[i].first).toInt()
+            val higher = if (abs(roots[i+1].first.roundToInt().toDouble() - roots[i+1].first) < 0.000000001)
+                roots[i+1].first.roundToInt()
+            else floor(roots[i+1].first).toInt()
+            if (higher > lower)
+                ans.add(Pair(lower, higher))
+        }
+        return LogicalExpression(ans)
+    }
+
+    fun smaller(other: ArithmeticExpression) = other.bigger(this)
+
     override fun toString(): String {
         if (this.polynomial.size == 1)
             return this.polynomial.first().toString()
@@ -176,77 +265,79 @@ data class ArithmeticExpression(var polynomial: ArrayList<Int> = ArrayList()) {
     }
 }
 
-data class LogicalExpression constructor(var rawExp: String) {
+data class LogicalExpression constructor(var segments: ArrayList<Pair<Int, Int>>) {
 
-    init {
-        if (rawExp.matches(Regex("""^\(.*\)$"""))) {
-            val exp = rawExp.subSequence(1, rawExp.length - 1)
-            var depth = 0
-            val tokens = arrayListOf("", "", "")
-            var tokenId = 0
-            for (i in exp.indices) {
-                when (exp[i]) {
-                    '(' -> depth++
-                    ')' -> depth--
-                }
-                if ((depth == 0) and (tokenId == 0) and (i > 0) and (exp[i] in operations)) {
-                    tokenId = 1
-                } else if (tokenId == 1) {
-                    tokenId = 2
-                }
-                tokens[tokenId] = tokens[tokenId] + exp[i]
-            }
-            when {
-                tokens[1] == "=" -> rawExp = when {
-                    ArithmeticExpression.from(tokens[0]) == ArithmeticExpression.from(tokens[2]) -> "(1=1)"
-                    (ArithmeticExpression.from(tokens[0]) -
-                            ArithmeticExpression.from(tokens[2])).polynomial.size == 1 -> "(1=0)"
-                    else -> rawExp
-                }
-                tokens[1] == ">" -> {
-                    val isPositive = (ArithmeticExpression.from(tokens[0]) -
-                        ArithmeticExpression.from(tokens[2])).isPositive()
-                    rawExp = when (isPositive) {
-                        TruthType.TRUE -> "(1=1)"
-                        TruthType.FALSE -> "(1=0)"
-                        else -> rawExp
+    companion object {
+        fun from(rawExp: String): LogicalExpression {
+            if (rawExp.matches(Regex("""^\(.*\)$"""))) {
+                val exp = rawExp.subSequence(1, rawExp.length - 1)
+                var depth = 0
+                val tokens = arrayListOf("", "", "")
+                var tokenId = 0
+                for (i in exp.indices) {
+                    when (exp[i]) {
+                        '(' -> depth++
+                        ')' -> depth--
                     }
-                }
-                tokens[1] == "<" -> {
-                    val isPositive = (ArithmeticExpression.from(tokens[0]) -
-                            ArithmeticExpression.from(tokens[2])).isPositive()
-                    rawExp = when (isPositive) {
-                        TruthType.TRUE -> "(1=0)"
-                        TruthType.FALSE -> "(1=1)"
-                        else -> rawExp
+                    if ((depth == 0) and (tokenId == 0) and (i > 0) and (exp[i] in operations)) {
+                        tokenId = 1
+                    } else if (tokenId == 1) {
+                        tokenId = 2
                     }
+                    tokens[tokenId] = tokens[tokenId] + exp[i]
                 }
-                tokens[1] == "|" -> {
-                    val firstExp = LogicalExpression(tokens[0])
-                    val secondExp = LogicalExpression(tokens[2])
-                    rawExp = when {
-                        (firstExp.rawExp == "(1=1)") or (secondExp.rawExp == "(1=1)") -> "(1=1)"
-                        firstExp.rawExp == "(1=0)" -> secondExp.rawExp
-                        secondExp.rawExp == "(1=0)" -> firstExp.rawExp
-                        else -> rawExp
+                when {
+                    tokens[1] == "=" -> {
+                        return ArithmeticExpression.from(tokens[0]).equality(ArithmeticExpression.from(tokens[2]))
                     }
-                }
-                tokens[1] == "&" -> {
-                    val firstExp = LogicalExpression(tokens[0])
-                    val secondExp = LogicalExpression(tokens[2])
-                    rawExp = when {
-                        (firstExp.rawExp == "(1=0)") or (secondExp.rawExp == "(1=0)") -> "(1=0)"
-                        firstExp.rawExp == "(1=1)" -> secondExp.rawExp
-                        secondExp.rawExp == "(1=1)" -> firstExp.rawExp
-                        else -> rawExp
+                    tokens[1] == ">" -> {
+                        return ArithmeticExpression.from(tokens[0]).bigger(ArithmeticExpression.from(tokens[2]))
                     }
+                    tokens[1] == "<" -> {
+                        return ArithmeticExpression.from(tokens[0]).smaller(ArithmeticExpression.from(tokens[2]))
+                    }
+                    tokens[1] == "|" -> {
+                        return from(tokens[0]).or(from(tokens[2]))
+                    }
+                    tokens[1] == "&" -> {
+                        return from(tokens[0]).and(from(tokens[2]))
+                    }
+                    tokens[1] in operations.map { it.toString() } ->
+                        throw IllegalArgumentException("TYPE ERROR")
+                    else -> throw SyntaxException("SYNTAX ERROR")
                 }
-                tokens[1] in operations.map { it.toString() } ->
-                    throw IllegalArgumentException("TYPE ERROR")
-                else -> throw SyntaxException("SYNTAX ERROR")
-            }
+            } else throw SyntaxException("SYNTAX ERROR")
         }
-        else throw SyntaxException("SYNTAX ERROR")
+    }
+
+    fun or(other: LogicalExpression): LogicalExpression {
+        if (this.segments.size == 0)
+            return other
+        if (other.segments.size == 0)
+            return this
+        val first = ArrayList<Int>(List(this.segments.size * 2) {0})
+        val second = ArrayList<Int>(List(other.segments.size * 2) {0})
+        for (i in first.indices) {
+            first[i*2] = this.segments[i].first
+            first[i*2+1] = this.segments[i].second
+            second[i*2] = other.segments[i].first
+            second[i*2+1] = other.segments[i].second
+        }
+        val total = arrayListOf<Int>()
+        total.addAll(first)
+        total.addAll(second)
+        total.sort()
+        var isInFirst = false
+        var isInSecond = false
+        var ans = arrayListOf<Int>()
+        var firstId = 0
+        var secondId = 0
+        for (i in total) {
+            if (i in first)
+                isInFirst = !isInFirst
+            if (i in second)
+                isInSecond = !isInSecond
+        }
     }
 
     override fun toString(): String {
